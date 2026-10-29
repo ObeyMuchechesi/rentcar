@@ -152,8 +152,10 @@ quote→book→conflict→cancel→rebook round trip plus the manager views.
 
 ## Deployment
 
-The API serves the built SPA, so one web process is enough. `backend/render.yaml` describes that service:
-build the frontend, install production-only backend deps, `node server.js`, health check on `/api/health`.
+The API serves the built SPA, so one web process is enough. `render.yaml` at the repo root describes that
+service: build the frontend, install production-only backend deps, `node server.js`, health check on
+`/api/health`. Create the Render web service from that blueprint and add `MONGODB_URI` in the dashboard — it is
+declared `sync: false` so it is never stored in the repository.
 
 Required in any host:
 
