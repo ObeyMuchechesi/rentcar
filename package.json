@@ -1,0 +1,15 @@
+{
+  "name": "car-rental-system",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Car rental platform: customer booking site plus manager back-office (Express + MongoDB + React).",
+  "scripts": {
+    "install:all": "npm --prefix backend install && npm --prefix frontend install",
+    "dev:api": "npm --prefix backend run dev",
+    "dev:web": "npm --prefix frontend run dev",
+    "build": "npm --prefix frontend run build",
+    "start": "npm --prefix backend start",
+    "test": "npm --prefix backend test",
+    "smoke": "npm --prefix backend run smoke"
+  }
+}
