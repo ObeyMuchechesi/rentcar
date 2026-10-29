@@ -37,9 +37,17 @@ export function AuthProvider({ children }) {
     setUser(null);
   }, []);
 
+  // PATCH /auth/me answers with the stored account, so the header picks up a new name or email
+  // without another round trip.
+  const updateProfile = useCallback(async (payload) => {
+    const data = await api('/auth/me', { method: 'PATCH', body: payload });
+    setUser(data.user);
+    return data.user;
+  }, []);
+
   const value = useMemo(
-    () => ({ user, loading, login, register, logout, isManager: user?.role === 'manager' }),
-    [user, loading, login, register, logout]
+    () => ({ user, loading, login, register, logout, updateProfile, isManager: user?.role === 'manager' }),
+    [user, loading, login, register, logout, updateProfile]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

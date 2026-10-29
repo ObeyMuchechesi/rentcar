@@ -1,15 +1,20 @@
 const { Schema, model } = require('mongoose');
 
 const ACTIVE_STATUSES = ['pending', 'confirmed', 'picked_up'];
-const STATUSES = [...ACTIVE_STATUSES, 'returned', 'cancelled', 'no_show'];
+const STATUSES = [...ACTIVE_STATUSES, 'returned', 'cancelled', 'no_show', 'declined'];
 const TRANSITIONS = {
-  pending: ['confirmed', 'cancelled', 'no_show'],
-  confirmed: ['picked_up', 'cancelled', 'no_show'],
+  pending: ['confirmed', 'cancelled', 'no_show', 'declined'],
+  confirmed: ['picked_up', 'cancelled', 'no_show', 'declined'],
   picked_up: ['returned'],
   returned: [],
   cancelled: [],
   no_show: [],
+  declined: [],
 };
+
+// A booking only becomes confirmed once both sides have said yes: the customer accepts the
+// quoted price and the manager approves the rental. Either side can stop it before then.
+const DECIDABLE_STATUSES = ['pending', 'confirmed'];
 
 const BookingSchema = new Schema(
   {
@@ -31,6 +36,10 @@ const BookingSchema = new Schema(
       childSeat: { type: Boolean, default: false },
     },
     notes: { type: String, trim: true, maxlength: 500 },
+    customerAccepted: { type: Boolean, default: false },
+    managerApproved: { type: Boolean, default: false },
+    declinedBy: { type: String, enum: ['customer', 'manager'] },
+    declinedAt: { type: Date },
     cancelledAt: { type: Date },
   },
   { timestamps: true, versionKey: false }
@@ -40,6 +49,7 @@ BookingSchema.index({ vehicle: 1, status: 1, pickUpDate: 1, returnDate: 1 });
 BookingSchema.index({ customer: 1, createdAt: -1 });
 
 BookingSchema.statics.ACTIVE_STATUSES = ACTIVE_STATUSES;
+BookingSchema.statics.DECIDABLE_STATUSES = DECIDABLE_STATUSES;
 BookingSchema.statics.TRANSITIONS = TRANSITIONS;
 
 // Half-open interval [pickUpDate, returnDate): a return day is free for the next pick-up.
@@ -54,6 +64,14 @@ BookingSchema.statics.overlappingQuery = function overlappingQuery(vehicleId, pi
   return match;
 };
 
+// Whose turn it is on a pending booking, so both dashboards can name one clear next action.
+BookingSchema.virtual('awaiting').get(function awaiting() {
+  if (this.status !== 'pending') return null;
+  if (!this.customerAccepted) return 'customer';
+  if (!this.managerApproved) return 'manager';
+  return null;
+});
+
 BookingSchema.set('toJSON', {
   virtuals: true,
   transform(_doc, ret) {
@@ -63,4 +81,4 @@ BookingSchema.set('toJSON', {
   },
 });
 
-module.exports = { Booking: model('Booking', BookingSchema), ACTIVE_STATUSES, STATUSES, TRANSITIONS };
+module.exports = { Booking: model('Booking', BookingSchema), ACTIVE_STATUSES, DECIDABLE_STATUSES, STATUSES, TRANSITIONS };

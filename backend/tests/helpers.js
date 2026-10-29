@@ -25,9 +25,9 @@ async function clear() {
   await Promise.all([User.deleteMany({}), Vehicle.deleteMany({}), Booking.deleteMany({})]);
 }
 
-async function makeUser({ role = 'customer', email = `user-${Date.now()}@test.io`, password = 'Password123!', name = 'Test User' } = {}) {
+async function makeUser({ role = 'customer', email = `user-${Date.now()}@test.io`, password = 'Password123!', name = 'Test User', phone = '+27825550000' } = {}) {
   const User = require('../src/models/User');
-  return User.create({ name, email, role, passwordHash: await bcrypt.hash(password, 4) });
+  return User.create({ name, email, role, phone, passwordHash: await bcrypt.hash(password, 4) });
 }
 
 async function makeVehicle(overrides = {}) {
@@ -44,7 +44,9 @@ async function makeVehicle(overrides = {}) {
     luggage: 2,
     dailyRate: 50,
     deposit: 100,
+    currency: 'ZAR',
     location: 'Test Depot',
+    country: 'ZA',
     mileageLimitKm: 400,
     ...overrides,
   });

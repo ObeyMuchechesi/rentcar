@@ -96,12 +96,133 @@ async function main() {
     body: { email: 'manager@rental.test', password: 'Manager123!' },
   });
   check('seeded manager can sign in', manager.status === 200, manager.text);
+  const managerToken = manager.body?.token;
 
-  const stats = await call('/api/stats/overview', { token: manager.body?.token });
+  const stats = await call('/api/stats/overview', { token: managerToken });
   check('manager dashboard stats load', stats.status === 200 && stats.body?.stats?.vehiclesTotal > 0, stats.text);
 
-  const allBookings = await call('/api/bookings/all?status=all&limit=5', { token: manager.body?.token });
+  const allBookings = await call('/api/bookings/all?status=all&limit=5', { token: managerToken });
   check('manager booking ledger loads', allBookings.status === 200 && Array.isArray(allBookings.body?.bookings), allBookings.text);
+
+  // --- two signatures: the renter signs by booking, the branch signs by approving ---
+  const [nextCar] = hidden.body.vehicles.filter((v) => v.status === 'available');
+  const unsigned = await call('/api/bookings', {
+    method: 'POST',
+    token,
+    body: { vehicleId: nextCar.id, pickUpDate: iso(10), returnDate: iso(13) },
+  });
+  const unsignedId = unsigned.body?.booking?.id;
+  check('a fresh booking waits on the branch', unsigned.body?.booking?.awaiting === 'manager', unsigned.text);
+
+  const queue = await call('/api/bookings/all?awaiting=manager&limit=100', { token: managerToken });
+  check(
+    'the branch queue finds it',
+    queue.body?.bookings.some((b) => b.id === unsignedId),
+    queue.text
+  );
+
+  const approved = await call(`/api/bookings/${unsignedId}/decision`, {
+    method: 'POST',
+    token: managerToken,
+    body: { action: 'accept' },
+  });
+  check('approval confirms the rental', approved.body?.booking?.status === 'confirmed', approved.text);
+
+  const withdrawn = await call(`/api/bookings/${unsignedId}/decision`, {
+    method: 'POST',
+    token,
+    body: { action: 'decline' },
+  });
+  check(
+    'the renter can still withdraw a confirmed booking',
+    withdrawn.body?.booking?.status === 'cancelled',
+    withdrawn.text
+  );
+
+  const freedAgain = await call(`/api/vehicles/${nextCar.id}/quote?startDate=${iso(10)}&endDate=${iso(13)}`);
+  check('withdrawing frees the dates', freedAgain.body?.available === true, freedAgain.text);
+
+  // --- worldwide catalogue ---
+  const locations = await call('/api/vehicles/locations');
+  check(
+    'every branch reports a country and a currency',
+    locations.body?.locations.every((l) => /^[A-Z]{2}$/.test(l.country) && /^[A-Z]{3}$/.test(l.currency)),
+    locations.text
+  );
+
+  const abroad = await call('/api/vehicles?country=GB');
+  check(
+    'the catalogue narrows to one country',
+    abroad.status === 200 && abroad.body.vehicles.length > 0 && abroad.body.vehicles.every((v) => v.country === 'GB'),
+    abroad.text
+  );
+
+  if (abroad.body?.vehicles.length) {
+    const [gb] = abroad.body.vehicles;
+    const gbQuote = await call(`/api/vehicles/${gb.id}/quote?startDate=${iso(4)}&endDate=${iso(6)}`);
+    check(
+      'a foreign branch quotes in its own money',
+      gbQuote.body?.currency === gb.currency,
+      gbQuote.text
+    );
+  }
+
+  // --- the accounts desk ---
+  const stamp = Date.now();
+  const scratchEmail = `smoke-${stamp}@test.local`;
+  const made = await call('/api/auth/accounts', {
+    method: 'POST',
+    token: managerToken,
+    body: {
+      name: 'Smoke Tester',
+      email: scratchEmail,
+      password: 'Smoke1234!',
+      phone: '+1 415 555 0100',
+      country: 'US',
+      role: 'customer',
+    },
+  });
+  const scratchId = made.body?.user?.id;
+  check('the desk opens a renter account', made.status === 201 && made.body?.user?.active === true, made.text);
+  check('phones are stored as E.164', made.body?.user?.phone === '+14155550100', made.text);
+
+  const rentersAtDesk = await call('/api/auth/accounts', { token });
+  check('renters cannot reach the accounts desk', rentersAtDesk.status === 403, rentersAtDesk.text);
+
+  const self = await call('/api/auth/me', { token: managerToken });
+  const selfDelete = await call(`/api/auth/accounts/${self.body?.user?.id}`, { method: 'DELETE', token: managerToken });
+  check('a manager cannot delete the account they are signed in with', selfDelete.status === 409, selfDelete.text);
+
+  const signedIn = await call('/api/auth/login', { method: 'POST', body: { email: scratchEmail, password: 'Smoke1234!' } });
+  check('the new account can sign in', signedIn.status === 200 && Boolean(signedIn.body?.token), signedIn.text);
+
+  const movedEmail = `smoke-${stamp}-2@test.local`;
+  const careless = await call('/api/auth/me', {
+    method: 'PATCH',
+    token: signedIn.body?.token,
+    body: { email: movedEmail },
+  });
+  check('changing your email costs a password', careless.status === 400, careless.text);
+
+  const careful = await call('/api/auth/me', {
+    method: 'PATCH',
+    token: signedIn.body?.token,
+    body: { email: movedEmail, currentPassword: 'Smoke1234!' },
+  });
+  check('the account can move off the test email', careful.status === 200 && careful.body?.user?.email === movedEmail, careful.text);
+
+  const suspended = await call(`/api/auth/accounts/${scratchId}`, {
+    method: 'PATCH',
+    token: managerToken,
+    body: { active: false },
+  });
+  check('the desk can suspend an account', suspended.status === 200 && suspended.body?.user?.active === false, suspended.text);
+
+  const lockedOut = await call('/api/auth/login', { method: 'POST', body: { email: movedEmail, password: 'Smoke1234!' } });
+  check('a suspended account is refused', lockedOut.status === 401, lockedOut.text);
+
+  const removed = await call(`/api/auth/accounts/${scratchId}`, { method: 'DELETE', token: managerToken });
+  check('an account with no history can be deleted', removed.status === 200, removed.text);
 
   const unauthorizedCreate = await call('/api/vehicles', {
     method: 'POST',

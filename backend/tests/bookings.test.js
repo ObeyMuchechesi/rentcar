@@ -123,7 +123,8 @@ test('pricing: weekly discount and extras are applied once', async () => {
       extraDriver: true,
       childSeat: true,
     });
-  assert.equal(short.body.booking.rentalTotal, 300 + 24 + 15);
+  // Extras are a share of the daily rate (16% and 10%), so a R100 car adds R16 + R10 a day.
+  assert.equal(short.body.booking.rentalTotal, 300 + 48 + 30);
 });
 
 test('booking validation rejects bad dates and unknown vehicles', async () => {
@@ -211,4 +212,122 @@ test('only managers can move a booking through the rental lifecycle', async () =
     .send({ status: 'confirmed' });
   assert.equal(confirm.status, 200);
   assert.equal(confirm.body.booking.status, 'confirmed');
+});
+
+test('a booking waits for the branch after the customer signs the quote', async () => {
+  const customer = await session('customer');
+  const manager = await session('manager');
+  const vehicle = await makeVehicle();
+
+  const created = await request(get())
+    .post('/api/bookings')
+    .set('Authorization', `Bearer ${customer.token}`)
+    .send({ vehicleId: String(vehicle._id), pickUpDate: shiftDays(5), returnDate: shiftDays(7) });
+  assert.equal(created.status, 201);
+  assert.equal(created.body.booking.status, 'pending');
+  assert.equal(created.body.booking.customerAccepted, true);
+  assert.equal(created.body.booking.managerApproved, false);
+  assert.equal(created.body.booking.awaiting, 'manager');
+
+  const mine = await request(get())
+    .get('/api/bookings/all')
+    .query({ awaiting: 'manager' })
+    .set('Authorization', `Bearer ${manager.token}`);
+  assert.deepEqual(mine.body.bookings.map((b) => b.id), [created.body.booking.id]);
+
+  const accepted = await request(get())
+    .post(`/api/bookings/${created.body.booking.id}/decision`)
+    .set('Authorization', `Bearer ${manager.token}`)
+    .send({ action: 'accept' });
+  assert.equal(accepted.status, 200);
+  assert.equal(accepted.body.booking.status, 'confirmed');
+  assert.equal(accepted.body.booking.awaiting, null);
+});
+
+test('either side can stop a booking before the car is handed over', async () => {
+  const customer = await session('customer');
+  const manager = await session('manager');
+  const vehicle = await makeVehicle({ licensePlate: 'DECLINE-1' });
+
+  const first = await request(get())
+    .post('/api/bookings')
+    .set('Authorization', `Bearer ${customer.token}`)
+    .send({ vehicleId: String(vehicle._id), pickUpDate: shiftDays(30), returnDate: shiftDays(33) });
+
+  const declined = await request(get())
+    .post(`/api/bookings/${first.body.booking.id}/decision`)
+    .set('Authorization', `Bearer ${manager.token}`)
+    .send({ action: 'decline' });
+  assert.equal(declined.status, 200);
+  assert.equal(declined.body.booking.status, 'declined');
+  assert.equal(declined.body.booking.declinedBy, 'manager');
+
+  // A declined car is free again, and the customer gets their own way out too.
+  const second = await request(get())
+    .post('/api/bookings')
+    .set('Authorization', `Bearer ${customer.token}`)
+    .send({ vehicleId: String(vehicle._id), pickUpDate: shiftDays(30), returnDate: shiftDays(33) });
+  assert.equal(second.status, 201);
+
+  const cancelled = await request(get())
+    .post(`/api/bookings/${second.body.booking.id}/decision`)
+    .set('Authorization', `Bearer ${customer.token}`)
+    .send({ action: 'decline' });
+  assert.equal(cancelled.status, 200);
+  assert.equal(cancelled.body.booking.status, 'cancelled');
+  assert.equal(cancelled.body.booking.declinedBy, 'customer');
+
+  const tooLate = await request(get())
+    .post(`/api/bookings/${second.body.booking.id}/decision`)
+    .set('Authorization', `Bearer ${manager.token}`)
+    .send({ action: 'accept' });
+  assert.equal(tooLate.status, 409);
+});
+
+test('a declined booking is not silently reopened by a later accept', async () => {
+  const customer = await session('customer');
+  const manager = await session('manager');
+  const vehicle = await makeVehicle({ licensePlate: 'DEAD-1' });
+
+  const created = await request(get())
+    .post('/api/bookings')
+    .set('Authorization', `Bearer ${customer.token}`)
+    .send({ vehicleId: String(vehicle._id), pickUpDate: shiftDays(12), returnDate: shiftDays(14) });
+  const id = created.body.booking.id;
+
+  await request(get()).post(`/api/bookings/${id}/decision`).set('Authorization', `Bearer ${manager.token}`).send({ action: 'decline' });
+  const reopen = await request(get())
+    .post(`/api/bookings/${id}/decision`)
+    .set('Authorization', `Bearer ${customer.token}`)
+    .send({ action: 'accept' });
+  assert.equal(reopen.status, 409);
+
+  const badAction = await request(get())
+    .post(`/api/bookings/${id}/decision`)
+    .set('Authorization', `Bearer ${customer.token}`)
+    .send({ action: 'maybe' });
+  assert.equal(badAction.status, 400);
+});
+
+test('a manager cannot sign for the customer', async () => {
+  const customer = await session('customer');
+  const manager = await session('manager');
+  const vehicle = await makeVehicle({ licensePlate: 'OTHERS-1' });
+
+  const created = await request(get())
+    .post('/api/bookings')
+    .set('Authorization', `Bearer ${customer.token}`)
+    .send({ vehicleId: String(vehicle._id), pickUpDate: shiftDays(40), returnDate: shiftDays(42) });
+
+  const foreign = await request(get())
+    .post(`/api/bookings/${created.body.booking.id}/decision`)
+    .set('Authorization', `Bearer ${(await session('customer')).token}`)
+    .send({ action: 'accept' });
+  assert.equal(foreign.status, 403);
+
+  const own = await request(get())
+    .post(`/api/bookings/${created.body.booking.id}/decision`)
+    .set('Authorization', `Bearer ${manager.token}`)
+    .send({ action: 'accept' });
+  assert.equal(own.status, 200);
 });

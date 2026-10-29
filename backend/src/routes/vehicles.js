@@ -12,7 +12,8 @@ const router = express.Router();
 const CLASSES = ['economy', 'sedan', 'suv', 'van', 'pickup', 'luxury', 'sports'];
 const WRITABLE = [
   'make', 'model', 'year', 'licensePlate', 'vehicleClass', 'transmission', 'fuel',
-  'seats', 'luggage', 'dailyRate', 'deposit', 'location', 'mileageLimitKm', 'status', 'features', 'imageUrl',
+  'seats', 'luggage', 'dailyRate', 'deposit', 'currency', 'location', 'country', 'mileageLimitKm', 'status',
+  'features', 'imageUrl',
 ];
 
 function parseDate(value, field) {
@@ -52,6 +53,7 @@ function buildFilter(query, req) {
   const showAll = req.user?.role === 'manager' && query.status === 'all';
   const filter = showAll ? {} : { status: { $ne: 'retired' } };
   if (query.location) filter.location = new RegExp(`^${query.location}$`, 'i');
+  if (query.country) filter.country = String(query.country).slice(0, 2).toUpperCase();
   if (query.vehicleClass && CLASSES.includes(query.vehicleClass)) filter.vehicleClass = query.vehicleClass;
   if (query.transmission === 'automatic' || query.transmission === 'manual') filter.transmission = query.transmission;
   if (query.fuel) filter.fuel = new RegExp(`^${query.fuel}$`, 'i');
@@ -74,9 +76,27 @@ const list = asyncHandler(async (req, res) => {
   res.json({ count: vehicles.length, vehicles });
 });
 
+// Branches are city + country pairs, because a worldwide catalogue cannot assume a city name is unique.
 const locations = asyncHandler(async (_req, res) => {
-  const values = await Vehicle.distinct('location', { status: { $ne: 'retired' } });
-  res.json({ locations: values.sort() });
+  const branches = await Vehicle.aggregate([
+    { $match: { status: { $ne: 'retired' } } },
+    {
+      $group: {
+        _id: { location: '$location', country: '$country' },
+        currency: { $first: '$currency' },
+        vehicles: { $sum: 1 },
+      },
+    },
+    { $sort: { '_id.country': 1, '_id.location': 1 } },
+  ]);
+  res.json({
+    locations: branches.map((b) => ({
+      location: b._id.location,
+      country: b._id.country,
+      currency: b.currency,
+      vehicles: b.vehicles,
+    })),
+  });
 });
 
 const getOne = asyncHandler(async (req, res) => {
@@ -116,6 +136,7 @@ const quote = asyncHandler(async (req, res) => {
   try {
     priced = priceRental({
       dailyRate: vehicle.dailyRate,
+      currency: vehicle.currency,
       pickUpDate,
       returnDate,
       extraDriver: req.query.extraDriver === 'true',
@@ -131,7 +152,15 @@ const quote = asyncHandler(async (req, res) => {
   }).lean();
 
   res.json({
-    vehicle: { id: vehicle.id, displayName: vehicle.displayName, deposit: vehicle.deposit, status: vehicle.status },
+    vehicle: {
+      id: vehicle.id,
+      displayName: vehicle.displayName,
+      deposit: vehicle.deposit,
+      currency: vehicle.currency,
+      location: vehicle.location,
+      country: vehicle.country,
+      status: vehicle.status,
+    },
     available: !clash && vehicle.status === 'available',
     bookedWindow: clash ? { startDate: toIsoDate(clash.pickUpDate), endDate: toIsoDate(clash.returnDate) } : null,
     ...priced,

@@ -421,7 +421,8 @@ textarea:focus {
 
 .badge.cancelled,
 .badge.no_show,
-.badge.retired {
+.badge.retired,
+.badge.declined {
   background: #fef3f2;
   color: var(--danger);
 }
@@ -676,10 +677,15 @@ textarea:focus {
 
 .bars li {
   display: grid;
-  grid-template-columns: 64px 1fr 74px;
+  grid-template-columns: 62px 1fr auto;
   gap: 9px;
   align-items: center;
   font-size: 13px;
+}
+
+.bar-label {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
 }
 
 .bar-track {
@@ -703,6 +709,77 @@ textarea:focus {
 
 .quick-links {
   margin-top: 20px;
+}
+
+.bars-block + .bars-block {
+  margin-top: 16px;
+}
+
+.bars-block .stat-label {
+  margin: 0 0 8px;
+}
+
+/* Dashboard and profile header: the title on the left, its one action on the right. */
+.page-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+}
+
+.page-head h1 {
+  margin-bottom: 2px;
+}
+
+.page-head p {
+  margin: 0;
+}
+
+.block {
+  margin-top: 24px;
+}
+
+.block-title {
+  font-size: 18px;
+  margin: 0 0 10px;
+}
+
+.standing {
+  margin: 6px 0 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--warn);
+}
+
+/* Sign-in is an exit from the shopfront, not a call to action, so it stays quiet. */
+.quiet-link {
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.quiet-link:hover {
+  color: var(--brand-dark);
+}
+
+.dot {
+  display: inline-block;
+  min-width: 18px;
+  margin-left: 5px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--warn);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+}
+
+.table .actions {
+  justify-content: flex-end;
 }
 
 @media (max-width: 900px) {

@@ -11,6 +11,7 @@
     "start": "node server.js",
     "dev": "node --watch server.js",
     "seed": "node src/seed.js",
+    "globalise": "node scripts/globalise.js",
     "smoke": "node scripts/smoke.js",
     "concurrency": "node scripts/concurrency.js",
     "test": "node --test --test-concurrency=1 tests/"

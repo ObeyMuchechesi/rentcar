@@ -10,6 +10,8 @@
     "build": "npm --prefix frontend run build",
     "start": "npm --prefix backend start",
     "test": "npm --prefix backend test",
+    "seed": "npm --prefix backend run seed",
+    "migrate:global": "npm --prefix backend run globalise",
     "smoke": "npm --prefix backend run smoke",
     "concurrency": "npm --prefix backend run concurrency"
   },

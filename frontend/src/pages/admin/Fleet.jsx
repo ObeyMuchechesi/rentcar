@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import StatusBadge from '../../components/StatusBadge';
 import { api, money } from '../../api';
+import { COUNTRIES, COUNTRY_CURRENCY, CURRENCIES, countryName } from '../../lib/countries';
 
 const EMPTY = {
   make: '',
@@ -14,9 +15,12 @@ const EMPTY = {
   luggage: 2,
   dailyRate: 50,
   deposit: 200,
+  currency: 'USD',
   location: '',
+  country: '',
   mileageLimitKm: 400,
   status: 'available',
+  imageUrl: '',
   features: '',
 };
 
@@ -24,32 +28,59 @@ const CLASSES = ['economy', 'sedan', 'suv', 'van', 'pickup', 'luxury', 'sports']
 
 export default function Fleet() {
   const [vehicles, setVehicles] = useState([]);
+  const [branches, setBranches] = useState([]);
+  const [countryFilter, setCountryFilter] = useState('');
+  const [locationFilter, setLocationFilter] = useState('');
   const [form, setForm] = useState(EMPTY);
   const [editingId, setEditingId] = useState(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
 
-  useEffect(() => {
-    refresh();
-  }, []);
-
-  async function refresh() {
+  const refresh = useCallback(async () => {
+    const params = new URLSearchParams({ sort: 'newest', limit: '200', status: 'all' });
+    if (countryFilter) params.set('country', countryFilter);
+    if (locationFilter) params.set('location', locationFilter);
     try {
-      const data = await api('/vehicles?sort=newest&limit=200', { auth: false });
+      // The token is what tells the API to include retired stock, so it stays editable here.
+      const data = await api(`/vehicles?${params.toString()}`);
       setVehicles(data.vehicles);
+      setError('');
     } catch (err) {
       setError(err.message);
     }
-  }
+  }, [countryFilter, locationFilter]);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  // The country list comes from the branches themselves, so it does not shrink when filtered.
+  useEffect(() => {
+    api('/vehicles/locations', { auth: false })
+      .then((d) => setBranches(d.locations))
+      .catch(() => setBranches([]));
+  }, []);
 
   const set = (key) => (event) => {
     const value = event.target.type === 'number' ? Number(event.target.value) : event.target.value;
     setForm((f) => ({ ...f, [key]: value }));
   };
 
+  // Picking a country pre-fills that market's currency; it stays editable because
+  // dollar-denominated rentals are normal in several countries.
+  function setCountry(event) {
+    const country = event.target.value;
+    setForm((f) => ({ ...f, country, currency: COUNTRY_CURRENCY[country] || f.currency }));
+  }
+
   function startEdit(vehicle) {
     setEditingId(vehicle.id);
-    setForm({ ...EMPTY, ...vehicle, features: (vehicle.features || []).join(', ') });
+    setForm({
+      ...EMPTY,
+      ...vehicle,
+      imageUrl: vehicle.imageUrl || '',
+      features: (vehicle.features || []).join(', '),
+    });
     setError('');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
@@ -99,6 +130,9 @@ export default function Fleet() {
       setError(err.message);
     }
   }
+
+  const countries = [...new Set(branches.map((b) => b.country))].sort();
+  const branchOptions = branches.filter((b) => !countryFilter || b.country === countryFilter);
 
   return (
     <div>
@@ -168,11 +202,11 @@ export default function Fleet() {
             <input type="number" value={form.luggage} onChange={set('luggage')} min={0} max={12} required />
           </label>
           <label>
-            Daily rate
+            Daily rate, {form.currency}
             <input type="number" value={form.dailyRate} onChange={set('dailyRate')} min={1} step="1" required />
           </label>
           <label>
-            Deposit
+            Deposit, {form.currency}
             <input type="number" value={form.deposit} onChange={set('deposit')} min={0} step="1" required />
           </label>
           <label>
@@ -180,8 +214,38 @@ export default function Fleet() {
             <input value={form.location} onChange={set('location')} required placeholder="Cape Town International" />
           </label>
           <label>
+            Country
+            <select value={form.country} onChange={setCountry} required>
+              <option value="">Choose a country</option>
+              {COUNTRIES.map((c) => (
+                <option key={c.code} value={c.code}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Currency
+            <select value={form.currency} onChange={set('currency')} required>
+              {CURRENCIES.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
             Mileage / day
             <input type="number" value={form.mileageLimitKm} onChange={set('mileageLimitKm')} min={0} required />
+          </label>
+          <label className="span-2">
+            Photo URL (optional)
+            <input
+              value={form.imageUrl}
+              onChange={set('imageUrl')}
+              placeholder="https://…/vehicle.jpg"
+              maxLength={300}
+            />
           </label>
           <label className="span-2">
             Features (comma separated)
@@ -197,6 +261,46 @@ export default function Fleet() {
           )}
         </div>
       </form>
+
+      <div className="card filters inline-filters">
+        <label>
+          Country
+          <select value={countryFilter} onChange={(e) => setCountryFilter(e.target.value)}>
+            <option value="">All countries</option>
+            {countries.map((code) => (
+              <option key={code} value={code}>
+                {countryName(code)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Branch
+          <select value={locationFilter} onChange={(e) => setLocationFilter(e.target.value)}>
+            <option value="">All branches</option>
+            {branchOptions.map((b) => (
+              <option key={`${b.country}-${b.location}`} value={b.location}>
+                {b.location} · {countryName(b.country)}
+              </option>
+            ))}
+          </select>
+        </label>
+        {(countryFilter || locationFilter) && (
+          <button
+            className="btn ghost"
+            onClick={() => {
+              setCountryFilter('');
+              setLocationFilter('');
+            }}
+          >
+            Clear
+          </button>
+        )}
+        <p className="result-count">
+          {vehicles.length} vehicle{vehicles.length === 1 ? '' : 's'}
+          {countryFilter ? ` in ${countryName(countryFilter)}` : ''}
+        </p>
+      </div>
 
       <table className="table">
         <thead>
@@ -219,8 +323,14 @@ export default function Fleet() {
                 </div>
               </td>
               <td>{v.licensePlate}</td>
-              <td>{v.location}</td>
-              <td>{money(v.dailyRate)}</td>
+              <td>
+                {v.location}
+                <div className="muted small">{countryName(v.country)}</div>
+              </td>
+              <td>
+                {money(v.dailyRate, v.currency)}
+                <div className="muted small">deposit {money(v.deposit, v.currency)}</div>
+              </td>
               <td>
                 <StatusBadge status={v.status} />
               </td>

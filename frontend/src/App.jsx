@@ -3,18 +3,21 @@ import Layout from './components/Layout';
 import Login from './pages/Login';
 import Search from './pages/Search';
 import VehicleDetail from './pages/VehicleDetail';
-import MyBookings from './pages/MyBookings';
-import Dashboard from './pages/admin/Dashboard';
+import Dashboard from './pages/Dashboard';
+import Account from './pages/Account';
+import AdminDashboard from './pages/admin/Dashboard';
 import Fleet from './pages/admin/Fleet';
 import Bookings from './pages/admin/Bookings';
-import Customers from './pages/admin/Customers';
+import Accounts from './pages/admin/Accounts';
 import { useAuth } from './context/AuthContext';
 
-function Protected({ children, managerOnly = false }) {
+function Protected({ children, managerOnly = false, customerOnly = false }) {
   const { user, isManager, loading } = useAuth();
   if (loading) return <p className="muted">Loading session…</p>;
   if (!user) return <Navigate to="/login" replace />;
   if (managerOnly && !isManager) return <Navigate to="/" replace />;
+  // A manager has a back office of their own; their own rentals list would only ever be empty.
+  if (customerOnly && isManager) return <Navigate to="/admin" replace />;
   return children;
 }
 
@@ -26,10 +29,18 @@ export default function App() {
         <Route path="/" element={<Search />} />
         <Route path="/vehicles/:id" element={<VehicleDetail />} />
         <Route
-          path="/bookings"
+          path="/dashboard"
+          element={
+            <Protected customerOnly>
+              <Dashboard />
+            </Protected>
+          }
+        />
+        <Route
+          path="/account"
           element={
             <Protected>
-              <MyBookings />
+              <Account />
             </Protected>
           }
         />
@@ -37,7 +48,7 @@ export default function App() {
           path="/admin"
           element={
             <Protected managerOnly>
-              <Dashboard />
+              <AdminDashboard />
             </Protected>
           }
         />
@@ -58,13 +69,16 @@ export default function App() {
           }
         />
         <Route
-          path="/admin/customers"
+          path="/admin/accounts"
           element={
             <Protected managerOnly>
-              <Customers />
+              <Accounts />
             </Protected>
           }
         />
+        {/* Bookmarks from the old paths still land somewhere sensible. */}
+        <Route path="/bookings" element={<Navigate to="/dashboard" replace />} />
+        <Route path="/admin/customers" element={<Navigate to="/admin/accounts" replace />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

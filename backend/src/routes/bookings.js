@@ -2,7 +2,8 @@ const express = require('express');
 const mongoose = require('mongoose');
 const crypto = require('crypto');
 const Vehicle = require('../models/Vehicle');
-const { Booking, TRANSITIONS } = require('../models/Booking');
+const User = require('../models/User');
+const { Booking, TRANSITIONS, DECIDABLE_STATUSES } = require('../models/Booking');
 const { ApiError, asyncHandler } = require('../middleware/errors');
 const { authenticate, requireRole } = require('../middleware/auth');
 const { priceRental } = require('../lib/pricing');
@@ -44,10 +45,27 @@ const create = asyncHandler(async (req, res) => {
   if (!vehicle) throw new ApiError(404, 'Vehicle not found');
   if (vehicle.status !== 'available') throw new ApiError(409, `${vehicle.displayName} is ${vehicle.status}`);
 
+  // A manager booking for a walk-in customer starts unsigned on the customer's side, so the
+  // quote only becomes a confirmed rental once that person accepts it themselves.
+  if (body.customerId && req.user.role !== 'manager') {
+    throw new ApiError(403, 'Only the branch can attach a booking to another account');
+  }
+  let renter = req.user;
+  let customerAccepted = true;
+  if (body.customerId) {
+    if (!mongoose.isValidObjectId(body.customerId)) throw new ApiError(400, 'Invalid customerId');
+    const found = await User.findById(body.customerId);
+    if (!found) throw new ApiError(404, 'Customer not found');
+    if (!found.active) throw new ApiError(409, `${found.name}'s account is deactivated`);
+    renter = found;
+    customerAccepted = false;
+  }
+
   let priced;
   try {
     priced = priceRental({
       dailyRate: vehicle.dailyRate,
+      currency: vehicle.currency,
       pickUpDate,
       returnDate,
       extraDriver: Boolean(body.extraDriver),
@@ -75,7 +93,7 @@ const create = asyncHandler(async (req, res) => {
 
       const draft = new Booking({
         code: generateCode(),
-        customer: req.user._id,
+        customer: renter._id,
         vehicle: vehicle._id,
         pickUpDate,
         returnDate,
@@ -88,6 +106,9 @@ const create = asyncHandler(async (req, res) => {
         breakdown: priced.breakdown,
         extras: { extraDriver: Boolean(body.extraDriver), childSeat: Boolean(body.childSeat) },
         notes: body.notes,
+        // Submitting the quote the customer was just shown is their half of the agreement;
+        // the branch still has to approve before the booking is confirmed.
+        customerAccepted,
       });
 
       try {
@@ -129,12 +150,15 @@ const listAll = asyncHandler(async (req, res) => {
     if (!mongoose.isValidObjectId(req.query.customer)) throw new ApiError(400, 'Invalid customer id');
     filter.customer = req.query.customer;
   }
+  // The branch queue is pending bookings that only need their decision.
+  if (req.query.awaiting === 'manager') Object.assign(filter, { status: 'pending', customerAccepted: true, managerApproved: false });
+  if (req.query.awaiting === 'customer') Object.assign(filter, { status: 'pending', customerAccepted: false });
 
   const limit = Math.min(Number(req.query.limit) || 50, 200);
   const bookings = await Booking.find(filter)
     .sort({ createdAt: -1 })
     .limit(limit)
-    .populate('vehicle', 'make model year licensePlate dailyRate')
+    .populate('vehicle', 'make model year licensePlate location dailyRate currency country')
     .populate('customer', 'name email phone');
   res.json({ bookings });
 });
@@ -164,6 +188,11 @@ const setStatus = asyncHandler(async (req, res) => {
 
   booking.status = status;
   if (status === 'cancelled' || status === 'no_show') booking.cancelledAt = new Date();
+  if (status === 'confirmed') booking.managerApproved = true;
+  if (status === 'declined') {
+    booking.declinedBy = 'manager';
+    booking.declinedAt = new Date();
+  }
   await booking.save();
   await booking.populate([
     { path: 'vehicle' },
@@ -172,15 +201,52 @@ const setStatus = asyncHandler(async (req, res) => {
   res.json({ booking });
 });
 
-const cancel = asyncHandler(async (req, res) => {
-  const booking = await loadForUser(req);
-  if (!['pending', 'confirmed'].includes(booking.status)) {
-    throw new ApiError(409, `A ${booking.status} booking cannot be cancelled`);
+// A rental needs two yeses: the customer accepts the quote, the branch approves the booking.
+// Either side can still say no until the car is handed over.
+function applyDecision(booking, actor, action) {
+  if (!DECIDABLE_STATUSES.includes(booking.status)) {
+    throw new ApiError(409, `A ${booking.status} booking can no longer be ${action === 'accept' ? 'accepted' : 'declined'}`);
   }
-  booking.status = 'cancelled';
-  booking.cancelledAt = new Date();
+  const at = new Date();
+
+  if (action === 'decline') {
+    if (actor === 'manager') {
+      booking.status = 'declined';
+    } else {
+      booking.status = 'cancelled';
+      booking.cancelledAt = at;
+    }
+    booking.declinedBy = actor;
+    booking.declinedAt = at;
+    return;
+  }
+
+  if (actor === 'manager') booking.managerApproved = true;
+  else booking.customerAccepted = true;
+  if (booking.customerAccepted && booking.managerApproved) booking.status = 'confirmed';
+}
+
+async function decide(req, actor, action) {
+  const booking = await loadForUser(req);
+  applyDecision(booking, actor, action);
   await booking.save();
-  res.json({ booking });
+  await booking.populate([
+    { path: 'vehicle' },
+    { path: 'customer', select: 'name email phone' },
+  ]);
+  return booking;
+}
+
+const actorFor = (req) => (req.user.role === 'manager' ? 'manager' : 'customer');
+
+const decideRoute = asyncHandler(async (req, res) => {
+  const { action } = req.body || {};
+  if (!['accept', 'decline'].includes(action)) throw new ApiError(400, 'Action must be accept or decline');
+  res.json({ booking: await decide(req, actorFor(req), action) });
+});
+
+const cancel = asyncHandler(async (req, res) => {
+  res.json({ booking: await decide(req, actorFor(req), 'decline') });
 });
 
 router.use(authenticate);
@@ -189,6 +255,7 @@ router.get('/mine', listMine);
 router.get('/all', requireRole('manager'), listAll);
 router.get('/:id', getOne);
 router.patch('/:id/status', requireRole('manager'), setStatus);
+router.post('/:id/decision', decideRoute);
 router.post('/:id/cancel', cancel);
 
 module.exports = router;

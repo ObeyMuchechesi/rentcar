@@ -7,6 +7,7 @@ const LABELS = {
   returned: 'Returned',
   cancelled: 'Cancelled',
   no_show: 'No show',
+  declined: 'Declined',
   available: 'Available',
   maintenance: 'Workshop',
   retired: 'Retired',
@@ -19,7 +20,7 @@ export default function StatusBadge({ status }) {
 export function VehiclePrice({ vehicle }) {
   return (
     <p className="price">
-      <strong>{money(vehicle.dailyRate)}</strong>
+      <strong>{money(vehicle.dailyRate, vehicle.currency)}</strong>
       <span> / day</span>
     </p>
   );

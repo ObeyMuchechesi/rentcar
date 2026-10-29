@@ -120,24 +120,52 @@ test('fleet writes need a manager and are validated', async () => {
     .send({ make: 'Honda', year: 1900 });
   assert.equal(bad.status, 400);
 
+  const wrongCurrency = await request(get())
+    .post('/api/vehicles')
+    .set('Authorization', `Bearer ${token}`)
+    .send({
+      make: 'Honda', model: 'Civic', year: new Date().getFullYear(), licensePlate: 'BAD-001',
+      vehicleClass: 'sedan', transmission: 'manual', fuel: 'petrol', seats: 5, luggage: 2,
+      dailyRate: 55, location: 'Pretoria', country: 'ZA', currency: 'rand',
+    });
+  assert.equal(wrongCurrency.status, 400);
+
   const ok = await request(get())
     .post('/api/vehicles')
     .set('Authorization', `Bearer ${token}`)
     .send({
       make: 'Honda', model: 'Civic', year: new Date().getFullYear(), licensePlate: 'NEW-001',
-      vehicleClass: 'sedan', transmission: 'manual', fuel: 'petrol', seats: 5, luggage: 2, dailyRate: 55, location: 'Pretoria',
+      vehicleClass: 'sedan', transmission: 'manual', fuel: 'petrol', seats: 5, luggage: 2,
+      dailyRate: 55, currency: 'GBP', country: 'GB', location: 'London Heathrow',
     });
   assert.equal(ok.status, 201);
   assert.equal(ok.body.vehicle.licensePlate, 'NEW-001');
+  assert.equal(ok.body.vehicle.currency, 'GBP');
 
   const dupe = await request(get())
     .post('/api/vehicles')
     .set('Authorization', `Bearer ${token}`)
     .send({
       make: 'Honda', model: 'Civic', year: new Date().getFullYear(), licensePlate: 'NEW-001',
-      vehicleClass: 'sedan', transmission: 'manual', fuel: 'petrol', seats: 5, luggage: 2, dailyRate: 55, location: 'Pretoria',
+      vehicleClass: 'sedan', transmission: 'manual', fuel: 'petrol', seats: 5, luggage: 2,
+      dailyRate: 55, currency: 'GBP', country: 'GB', location: 'London Heathrow',
     });
   assert.equal(dupe.status, 400);
+});
+
+test('the catalogue can be narrowed to one country and lists branches with their currency', async () => {
+  await makeVehicle({ licensePlate: 'CT-1', location: 'Cape Town International', country: 'ZA', currency: 'ZAR' });
+  await makeVehicle({ licensePlate: 'JHB-1', location: 'Johannesburg OR Tambo', country: 'ZA', currency: 'ZAR', make: 'Ford' });
+  await makeVehicle({ licensePlate: 'LHR-1', location: 'London Heathrow', country: 'GB', currency: 'GBP', make: 'Nissan' });
+
+  const gb = await request(get()).get('/api/vehicles').query({ country: 'GB' });
+  assert.deepEqual(gb.body.vehicles.map((v) => v.licensePlate), ['LHR-1']);
+
+  const branches = await request(get()).get('/api/vehicles/locations');
+  assert.deepEqual(
+    branches.body.locations.map((b) => [b.location, b.country, b.currency, b.vehicles]).sort(),
+    [['Cape Town International', 'ZA', 'ZAR', 1], ['Johannesburg OR Tambo', 'ZA', 'ZAR', 1], ['London Heathrow', 'GB', 'GBP', 1]]
+  );
 });
 
 test('rates are locked while a vehicle is on rent and deletion is blocked', async () => {
@@ -171,8 +199,11 @@ test('the quote endpoint is the single source of pricing truth', async () => {
   assert.equal(q.status, 200);
   assert.equal(q.body.days, 7);
   assert.equal(q.body.available, true);
-  assert.equal(q.body.breakdown.rentalTotal, 595 + 56);
+  assert.equal(q.body.currency, 'ZAR');
+  // 15% off a week plus an additional driver at 16% of the daily rate.
+  assert.equal(q.body.breakdown.rentalTotal, 595 + 112);
   assert.equal(q.body.vehicle.deposit, 250);
+  assert.equal(q.body.vehicle.currency, 'ZAR');
 
   // Booking the same window must charge exactly what the quote promised.
   const customer = await makeUser({ email: `q-${Date.now()}@test.io` });
@@ -208,23 +239,48 @@ test('retired vehicles stay out of the public catalogue but not out of the manag
   assert.deepEqual(asManager.body.vehicles.map((v) => v.licensePlate).sort(), ['LIVE-1', 'OLD-1']);
 });
 
-test('manager stats count fleet, bookings and revenue', async () => {
+test('manager stats count fleet, bookings and revenue per currency', async () => {
   const token = await managerToken();
   const customer = await makeUser({ email: `s-${Date.now()}@test.io` });
   const login = await request(get()).post('/api/auth/login').send({ email: customer.email, password: 'Password123!' });
-  const vehicle = await makeVehicle({ dailyRate: 100, licensePlate: 'STAT-1' });
-  await book(String(vehicle._id), login.body.token, shiftDays(2), shiftDays(9));
+  const customerToken = login.body.token;
+
+  const zar = await makeVehicle({ dailyRate: 100, licensePlate: 'STAT-1' });
+  const gbp = await makeVehicle({
+    dailyRate: 100, licensePlate: 'STAT-2', make: 'Ford', currency: 'GBP', country: 'GB', location: 'London Heathrow',
+  });
+
+  const first = await book(String(zar._id), customerToken, shiftDays(2), shiftDays(9));
+  const second = await book(String(gbp._id), customerToken, shiftDays(12), shiftDays(19));
+
+  // A request that nobody has approved yet is not money.
+  const before = await request(get()).get('/api/stats/overview').set('Authorization', `Bearer ${token}`);
+  assert.equal(before.body.stats.awaitingManager, 2);
+  assert.deepEqual(before.body.stats.revenue, []);
+
+  for (const id of [first.body.booking.id, second.body.booking.id]) {
+    const accepted = await request(get())
+      .post(`/api/bookings/${id}/decision`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ action: 'accept' });
+    assert.equal(accepted.body.booking.status, 'confirmed');
+  }
 
   const anon = await request(get()).get('/api/stats/overview');
   assert.equal(anon.status, 401);
 
   const overview = await request(get()).get('/api/stats/overview').set('Authorization', `Bearer ${token}`);
   assert.equal(overview.status, 200);
-  assert.equal(overview.body.stats.vehiclesTotal, 1);
-  assert.equal(overview.body.stats.activeBookings, 1);
+  assert.equal(overview.body.stats.vehiclesTotal, 2);
+  assert.equal(overview.body.stats.branches, 2);
+  assert.equal(overview.body.stats.countries, 2);
+  assert.equal(overview.body.stats.activeBookings, 2);
   assert.equal(overview.body.stats.customers, 1);
-  assert.equal(overview.body.stats.revenueAllTime, 595);
+  assert.deepEqual(
+    overview.body.stats.revenue.map((r) => [r.currency, r.allTime]),
+    [['GBP', 595], ['ZAR', 595]]
+  );
 
   const revenue = await request(get()).get('/api/stats/revenue').set('Authorization', `Bearer ${token}`);
-  assert.equal(revenue.body.months.reduce((s, m) => s + m.revenue, 0), 595);
+  assert.equal(revenue.body.currencies.reduce((s, c) => s + c.allTime, 0), 1190);
 });

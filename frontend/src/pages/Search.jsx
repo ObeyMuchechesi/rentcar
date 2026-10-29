@@ -2,16 +2,18 @@ import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import VehicleCard from '../components/VehicleCard';
 import { api, addDaysIso, todayIso } from '../api';
+import { COUNTRIES } from '../lib/countries';
 
 const CLASSES = ['economy', 'sedan', 'suv', 'van', 'pickup', 'luxury', 'sports'];
 
 export default function Search() {
   const [params, setParams] = useSearchParams();
-  const [locations, setLocations] = useState([]);
+  const [branches, setBranches] = useState([]);
   const [vehicles, setVehicles] = useState([]);
   const [state, setState] = useState({ loading: true, error: '' });
 
   const query = {
+    country: params.get('country') || '',
     location: params.get('location') || '',
     vehicleClass: params.get('vehicleClass') || '',
     startDate: params.get('startDate') || '',
@@ -20,7 +22,9 @@ export default function Search() {
   };
 
   useEffect(() => {
-    api('/vehicles/locations').then((d) => setLocations(d.locations)).catch(() => setLocations([]));
+    api('/vehicles/locations', { auth: false })
+      .then((d) => setBranches(d.locations))
+      .catch(() => setBranches([]));
   }, []);
 
   useEffect(() => {
@@ -41,16 +45,25 @@ export default function Search() {
       if (value) next.set(key, value);
       else next.delete(key);
     });
+    // A branch only exists inside one country, so changing the country clears the pick.
+    if ('country' in patch && patch.country !== query.country) next.delete('location');
     setParams(next);
   }
 
   const dateSearch = Boolean(query.startDate && query.endDate);
+  const countries = [...new Set(branches.map((b) => b.country))].sort();
+  const branchOptions = branches.filter((b) => !query.country || b.country === query.country);
+  // Countries nobody can rent in yet stay out of the picker.
+  const countryChoices = COUNTRIES.filter((c) => countries.includes(c.code));
 
   return (
     <div>
       <section className="hero">
         <h1>Book the right car for the trip</h1>
-        <p className="muted">Pick your dates first — the list hides anything already on rent for that window.</p>
+        <p className="muted">
+          {branches.length} branches across {countries.length} countries — every price is quoted in the money that branch
+          takes, so what you see is what you pay at the counter.
+        </p>
       </section>
 
       <section className="card filters">
@@ -65,7 +78,6 @@ export default function Search() {
                 const startDate = e.target.value;
                 const next = { startDate };
                 if (startDate && (!query.endDate || query.endDate <= startDate)) {
-                  next.endDate = addDaysIso(0);
                   const d = new Date(`${startDate}T00:00:00.000Z`);
                   d.setUTCDate(d.getUTCDate() + 1);
                   next.endDate = d.toISOString().slice(0, 10);
@@ -84,12 +96,23 @@ export default function Search() {
             />
           </label>
           <label>
-            Location
+            Country
+            <select value={query.country} onChange={(e) => update({ country: e.target.value })}>
+              <option value="">Every country</option>
+              {countryChoices.map((c) => (
+                <option key={c.code} value={c.code}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Branch
             <select value={query.location} onChange={(e) => update({ location: e.target.value })}>
-              <option value="">All locations</option>
-              {locations.map((loc) => (
-                <option key={loc} value={loc}>
-                  {loc}
+              <option value="">All branches</option>
+              {branchOptions.map((b) => (
+                <option key={`${b.country}-${b.location}`} value={b.location}>
+                  {b.location} ({b.country}) · {b.vehicles} cars
                 </option>
               ))}
             </select>
@@ -110,12 +133,12 @@ export default function Search() {
           <label className="inline">
             Sort
             <select value={query.sort} onChange={(e) => update({ sort: e.target.value })}>
-              <option value="price_asc">Price: low to high</option>
-              <option value="price_desc">Price: high to low</option>
+              <option value="price_asc">Cheapest first in each currency</option>
+              <option value="price_desc">Most expensive first</option>
               <option value="newest">Newest arrivals</option>
             </select>
           </label>
-          {(dateSearch || query.location || query.vehicleClass) && (
+          {(dateSearch || query.location || query.vehicleClass || query.country) && (
             <button className="btn ghost" onClick={() => setParams({})}>
               Clear filters
             </button>
@@ -127,7 +150,7 @@ export default function Search() {
       {state.loading ? (
         <p className="muted">Loading fleet…</p>
       ) : vehicles.length === 0 ? (
-        <p className="empty">No vehicles match. Try widening the dates or picking another location.</p>
+        <p className="empty">No vehicles match. Try widening the dates or picking another branch.</p>
       ) : (
         <>
           <p className="result-count">
@@ -147,10 +170,11 @@ export default function Search() {
       )}
 
       <section className="card demo">
-        <h4>Seeded demo logins</h4>
-        <p className="small">
-          Customer <code>driver@rental.test</code> / <code>Driver123!</code> · Manager <code>manager@rental.test</code>{' '}
-          / <code>Manager123!</code>
+        <h4>How booking works here</h4>
+        <p className="small muted">
+          You pick the dates and accept the quote, the branch approves the rental, and the car is yours once both
+          signatures are on it. Either side can still say no before the keys change hands — and a signed request is
+          only ever priced in the branch&apos;s own currency ({[...new Set(vehicles.map((v) => v.currency))].join(', ') || 'multiple'}).
         </p>
       </section>
     </div>
