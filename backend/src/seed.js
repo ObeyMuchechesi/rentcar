@@ -102,7 +102,7 @@ async function seed() {
   console.log(`  ${vehicles.length} vehicles, ${customers.length} customers, ${created} bookings`);
   console.log(`  manager : ${manager.email} / ${managerPassword}`);
   console.log(`  customer: driver@rental.test / ${customerPassword}`);
-  console.log(`  uri     : ${config.mongoUri}`);
+  console.log(`  uri     : ${config.mongoUri.replace(/\/\/[^@/]+@/, '//***@')}`);
 }
 
 async function seedIfEmpty() {
