@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const { config } = require('./config');
+const { supportsTransactions } = require('./lib/transaction');
 
 let memoryServer = null;
 
@@ -17,6 +18,9 @@ async function connect(uri = config.mongoUri) {
   }
 
   await mongoose.connect(uri, { serverSelectionTimeoutMS: 8000 });
+  // Warms the cache that decides whether bookings use a transaction or the in-process lock.
+  const transactions = await supportsTransactions();
+  console.log(`MongoDB connected — cross-instance booking transactions ${transactions ? 'enabled' : 'unavailable (single-instance lock only)'}`);
   return mongoose.connection;
 }
 

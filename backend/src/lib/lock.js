@@ -1,6 +1,5 @@
-// Serialises overlapping-read-then-write sections within this process. A single Express
-// instance is the supported topology; a multi-instance deployment needs MongoDB
-// transactions on a replica set instead.
+// Serialises overlapping-read-then-write sections within this process. Only one process sees
+// this map, so cross-instance safety comes from the MongoDB transaction in reservation.js.
 const locks = new Map();
 
 function withLock(key, work) {

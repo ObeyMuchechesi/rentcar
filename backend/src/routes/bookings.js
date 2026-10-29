@@ -6,7 +6,8 @@ const { Booking, TRANSITIONS } = require('../models/Booking');
 const { ApiError, asyncHandler } = require('../middleware/errors');
 const { authenticate, requireRole } = require('../middleware/auth');
 const { priceRental } = require('../lib/pricing');
-const { withLock } = require('../lib/lock');
+const { withReservation } = require('../lib/reservation');
+const { isTransactionConflict } = require('../lib/transaction');
 const { toDateOnly, toIsoDate } = require('../lib/dates');
 
 const router = express.Router();
@@ -56,43 +57,58 @@ const create = asyncHandler(async (req, res) => {
     throw new ApiError(400, err.message);
   }
 
-  const booking = await withLock(String(vehicle._id), async () => {
-    const clash = await Booking.findOne(
-      Booking.overlappingQuery(vehicle._id, pickUpDate, returnDate),
-      { pickUpDate: 1, returnDate: 1 }
-    ).lean();
-    if (clash) {
-      throw new ApiError(
-        409,
-        `${vehicle.displayName} is already booked ${toIsoDate(clash.pickUpDate)} to ${toIsoDate(clash.returnDate)} for those dates`
-      );
-    }
+  let booking;
+  try {
+    booking = await withReservation(String(vehicle._id), async (session) => {
+      const withSession = session ? { session } : {};
+      const clash = await Booking.findOne(
+        Booking.overlappingQuery(vehicle._id, pickUpDate, returnDate),
+        { pickUpDate: 1, returnDate: 1 },
+        withSession
+      ).lean();
+      if (clash) {
+        throw new ApiError(
+          409,
+          `${vehicle.displayName} is already booked ${toIsoDate(clash.pickUpDate)} to ${toIsoDate(clash.returnDate)} for those dates`
+        );
+      }
 
-    const draft = new Booking({
-      code: generateCode(),
-      customer: req.user._id,
-      vehicle: vehicle._id,
-      pickUpDate,
-      returnDate,
-      pickUpLocation: body.pickUpLocation || vehicle.location,
-      returnLocation: body.returnLocation || body.pickUpLocation || vehicle.location,
-      days: priced.days,
-      rentalTotal: priced.breakdown.rentalTotal,
-      deposit: vehicle.deposit,
-      currency: priced.currency,
-      breakdown: priced.breakdown,
-      extras: { extraDriver: Boolean(body.extraDriver), childSeat: Boolean(body.childSeat) },
-      notes: body.notes,
+      const draft = new Booking({
+        code: generateCode(),
+        customer: req.user._id,
+        vehicle: vehicle._id,
+        pickUpDate,
+        returnDate,
+        pickUpLocation: body.pickUpLocation || vehicle.location,
+        returnLocation: body.returnLocation || body.pickUpLocation || vehicle.location,
+        days: priced.days,
+        rentalTotal: priced.breakdown.rentalTotal,
+        deposit: vehicle.deposit,
+        currency: priced.currency,
+        breakdown: priced.breakdown,
+        extras: { extraDriver: Boolean(body.extraDriver), childSeat: Boolean(body.childSeat) },
+        notes: body.notes,
+      });
+
+      try {
+        if (session) {
+          // Writing the vehicle row inside the transaction is what makes two simultaneous
+          // bookings on different instances abort each other instead of both committing.
+          await Vehicle.updateOne({ _id: vehicle._id }, { $inc: { bookingEpoch: 1 } }, { session });
+        }
+        await draft.save(withSession);
+      } catch (err) {
+        if (err.code === 11000) throw new ApiError(409, 'That booking has already been taken, please retry');
+        throw err;
+      }
+      return draft;
     });
-
-    try {
-      await draft.save();
-    } catch (err) {
-      if (err.code === 11000) throw new ApiError(409, 'That booking has already been taken, please retry');
-      throw err;
+  } catch (err) {
+    if (isTransactionConflict(err)) {
+      throw new ApiError(409, `${vehicle.displayName} was booked by someone else at the same moment, please retry`);
     }
-    return draft;
-  });
+    throw err;
+  }
 
   res.status(201).json({ booking: await booking.populate('vehicle') });
 });

@@ -20,6 +20,9 @@ const VehicleSchema = new Schema(
     location: { type: String, required: true, trim: true, maxlength: 60 },
     mileageLimitKm: { type: Number, required: true, min: 0, default: 400 },
     status: { type: String, enum: ['available', 'maintenance', 'retired'], default: 'available' },
+    // Bumped inside every booking transaction so two concurrent bookings write the same
+    // document and MongoDB aborts the loser instead of double-booking the car.
+    bookingEpoch: { type: Number, default: 0 },
     features: { type: [String], default: [] },
     imageUrl: { type: String, trim: true },
   },
@@ -35,6 +38,7 @@ VehicleSchema.set('toJSON', {
   virtuals: true,
   transform(_doc, ret) {
     delete ret._id;
+    delete ret.bookingEpoch;
     return ret;
   },
 });
