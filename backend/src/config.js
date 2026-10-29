@@ -8,6 +8,9 @@ const config = {
   jwtSecret: process.env.JWT_SECRET || 'insecure-dev-secret',
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || '7d',
   webDist: process.env.WEB_DIST || path.join(__dirname, '..', '..', 'frontend', 'dist'),
+  // Vercel's CDN serves the Vite build straight from outputDirectory, so the function
+  // bundle stays API-only there.
+  serveStatic: process.env.VERCEL !== '1',
 };
 
 function assertConfig() {

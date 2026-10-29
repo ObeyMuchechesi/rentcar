@@ -5,6 +5,7 @@ const helmet = require('helmet');
 const cors = require('cors');
 const mongoose = require('mongoose');
 const { config } = require('./config');
+const { transactionsResolved } = require('./lib/transaction');
 const { errorHandler, notFound } = require('./middleware/errors');
 const authRoutes = require('./routes/auth');
 const vehicleRoutes = require('./routes/vehicles');
@@ -23,6 +24,7 @@ function createApp() {
       status: 'ok',
       uptimeSeconds: Math.round(process.uptime()),
       database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+      bookingTransactions: transactionsResolved(),
       version: require('../package.json').version,
     });
   });
@@ -33,11 +35,13 @@ function createApp() {
   app.use('/api/stats', statsRoutes);
 
   const indexHtml = path.join(config.webDist, 'index.html');
-  if (fs.existsSync(indexHtml)) {
-    app.use(express.static(config.webDist));
-    app.get(/^(?!\/api\/).*/, (_req, res) => res.sendFile(indexHtml));
-  } else if (config.env !== 'test') {
-    console.warn(`SPA build not found at ${config.webDist} — serving API only (use the Vite dev server for UI work)`);
+  if (config.serveStatic) {
+    if (fs.existsSync(indexHtml)) {
+      app.use(express.static(config.webDist));
+      app.get(/^(?!\/api\/).*/, (_req, res) => res.sendFile(indexHtml));
+    } else if (config.env !== 'test') {
+      console.warn(`SPA build not found at ${config.webDist} — serving API only (use the Vite dev server for UI work)`);
+    }
   }
 
   app.use(notFound);

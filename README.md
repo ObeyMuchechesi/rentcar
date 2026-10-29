@@ -15,8 +15,10 @@ managers, backed by an Express API on MongoDB.
 ## Layout
 
 ```
-backend/     Express API, Mongoose models, seed script, tests, smoke script
+backend/     Express API, Mongoose models, seed script, tests, verification scripts
 frontend/    React SPA (customer site + manager console)
+api/index.js Vercel serverless entry that boots the Express app
+vercel.json  build, static output and /api routing for the deployment
 ```
 
 ## Design
@@ -40,10 +42,12 @@ A vehicle is unavailable for a window if any booking with an **active** status (
 `picked_up`) overlaps it. Overlap is `existing.pickUp < new.return && existing.return > new.pickUp`, so a car
 returned on a day is bookable again that same day. Cancelled, no-show and returned bookings free their dates.
 
-`backend/src/routes/bookings.js:1` performs the overlap check and the insert inside a per-vehicle in-process
-lock (`backend/src/lib/lock.js:1`) so simultaneous requests for one car produce exactly one booking. This holds
-for a single API instance — the supported topology. A multi-instance deployment should replace it with a
-MongoDB transaction over a replica set.
+`backend/src/routes/bookings.js:62` runs the overlap check and the insert inside a MongoDB transaction that also
+increments `Vehicle.bookingEpoch`. Two simultaneous bookings of one car therefore write the same document, the
+loser aborts with a write conflict, and the retry reads the winner's booking and answers 409 — the guarantee
+holds across API instances, which is what Vercel's serverless functions are. On a standalone MongoDB, where
+transactions do not exist, `backend/src/lib/reservation.js:1` falls back to the per-vehicle in-process lock
+(`backend/src/lib/lock.js:1`) and `GET /api/health` reports `bookingTransactions: false`.
 
 ### Pricing
 
@@ -144,24 +148,50 @@ Two more seeded customers exist (`thando@rental.test`, `lihle@rental.test`) with
 npm test                       # 25 integration tests (booking conflicts, auth, pricing, roles, stats)
 npm run build && npm start     # then:
 npm run smoke                  # 16 end-to-end checks against the running stack
+SMOKE_BASE_URL=https://<your-deployment> npm run smoke   # the same checks against a deployment
 ```
 
+`npm run concurrency` is the cross-instance proof: it starts two separate API processes against the
+same replica set and races eight identical bookings between them, three rounds, asserting exactly one 201 and one
+stored booking per round. It refuses to run against a standalone server, where the answer would only prove the
+in-process lock works.
+
 Tests run against an in-memory MongoDB with `--test-concurrency=1`; spawning several instances in parallel
-exceeds the mongod startup budget on Windows. The smoke script needs a reachable server and asserts the
-quote→book→conflict→cancel→rebook round trip plus the manager views.
+exceeds the mongod startup budget on Windows. The in-memory server is standalone, so the suite exercises the
+lock fallback while `npm run concurrency` exercises the transaction path. The smoke script needs a reachable
+server and asserts the quote→book→conflict→cancel→rebook round trip plus the manager views.
 
 ## Deployment
 
-The API serves the built SPA, so one web process is enough. `render.yaml` at the repo root describes that
-service: build the frontend, install production-only backend deps, `node server.js`, health check on
-`/api/health`. Create the Render web service from that blueprint and add `MONGODB_URI` in the dashboard — it is
-declared `sync: false` so it is never stored in the repository.
+Live at **https://rentcar-woad.vercel.app** (public). Vercel serves the Vite build from its CDN and rewrites
+`/api/*` to a single Node function:
 
-Required in any host:
+- `buildCommand` / `outputDirectory` build `frontend/dist`; files that exist in the output win over rewrites, so
+  hashed assets load normally while `/admin` and other deep links fall through to `index.html`
+- `api/index.js` boots the Express app once per warm instance and answers 503 while it is still connecting, so
+  only cold starts pay for the Atlas handshake
+- with the CDN owning the frontend, `VERCEL=1` switches off the Express static mount (`backend/src/config.js:13`)
+  and the function stays API-only
+- the function is API-only, so booking safety depends on the transaction path: `GET /api/health` must report
+  `bookingTransactions: true`
 
-- `MONGODB_URI` — a real connection string; `memory` is refused with `NODE_ENV=production`
+Required environment variables, both stored as Vercel *Sensitive* values and never in the repository:
+
+- `MONGODB_URI` — a real replica-set connection string; `memory` is refused with `NODE_ENV=production`
 - `JWT_SECRET` — a long random value, also required in production
 - `WEB_DIST` — only if the build output is not at `frontend/dist`
-- `CORS_ORIGIN` — comma-separated allow-list, only when the SPA is hosted separately
+- `CORS_ORIGIN` — comma-separated allow-list, only when the SPA is hosted separately from the API
 
-Because production installs with `--omit=dev`, `mongodb-memory-server` is never downloaded there.
+MongoDB Atlas must accept connections from Vercel's rotating egress addresses, i.e. an IP access list entry of
+`0.0.0.0/0`; otherwise the function boots and reports `database: disconnected`.
+
+```bash
+npx vercel link --yes --project rentcar
+grep '^MONGODB_URI=' backend/.env | cut -d= -f2- | tr -d '\r\n' | npx vercel env add MONGODB_URI production --sensitive
+npx vercel env add JWT_SECRET production --sensitive          # pipes a fresh secret, nothing is echoed
+npx vercel deploy --prod --yes
+```
+
+Only the root runtime dependencies are installed on Vercel — `backend/package.json` devDependencies are not —
+so `mongodb-memory-server` never reaches the function. `vercel@52` is the CLI version used here; the current
+`latest` fails on Node 20.11 because it `require()`s an ES module, which needs Node 20.19+.
