@@ -12,8 +12,11 @@ const Vehicle = require('../src/models/Vehicle');
 const { Booking } = require('../src/models/Booking');
 const { seedIfEmpty, VEHICLES, CUSTOMERS } = require('../src/seed');
 
-// Everything in a pre-worldwide database came off the Cape Town / Johannesburg / Durban fleet.
-const LEGACY = { currency: 'ZAR', country: 'ZA', drivingLicenceCountry: 'ZA' };
+// Everything in a pre-worldwide database came off the Cape Town / Johannesburg / Durban fleet, and
+// those rates were always presented in dollars — the old build formatted every price as USD, and the
+// bookings on file are recorded in USD too. Stamping them ZAR would silently cut every price by the
+// exchange rate, so the money keeps its currency and only the geography is inferred.
+const LEGACY = { currency: 'USD', country: 'ZA', drivingLicenceCountry: 'ZA' };
 const SETTLED = ['confirmed', 'picked_up', 'returned', 'cancelled', 'no_show'];
 
 async function backfillVehicles() {

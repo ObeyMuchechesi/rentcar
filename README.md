@@ -209,6 +209,11 @@ booking's existing status, normalises phone numbers to E.164, and tops the fleet
 reports what it changed and is safe to re-run; a second pass changes nothing. It never deletes a row, and on
 `NODE_ENV=production` it also declines to insert the demo renter accounts (unless `SEED_DEMO_ACCOUNTS=true`).
 
+Legacy rows get geography inferred but money left alone: their `country` becomes `ZA` while the `currency` stays
+`USD`, because the pre-worldwide build formatted every price in dollars and re-stamping them as the local currency
+would silently revalue every rate and booking already on file. Re-rate a branch deliberately from the Fleet screen
+if you want prices in the money it actually charges.
+
 ## Verification
 
 ```bash

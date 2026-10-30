@@ -21,7 +21,8 @@ beforeEach(async () => {
 });
 
 // Documents as they were written before the worldwide change: no country, no currency,
-// phone straight from the keyboard, and no handshake flags on the booking.
+// rates in the dollars the old build formatted everything as, phone straight from the keyboard,
+// and no handshake flags on the booking.
 async function insertLegacyFleet() {
   const vehicle = await Vehicle.collection
     .insertOne({
@@ -34,8 +35,8 @@ async function insertLegacyFleet() {
       fuel: 'petrol',
       seats: 5,
       luggage: 2,
-      dailyRate: 490,
-      deposit: 2500,
+      dailyRate: 42,
+      deposit: 250,
       location: 'Cape Town International',
       mileageLimitKm: 400,
       status: 'available',
@@ -63,9 +64,9 @@ async function insertLegacyFleet() {
     returnLocation: 'Cape Town International',
     status: 'returned',
     days: 3,
-    rentalTotal: 1470,
-    deposit: 2500,
-    breakdown: { dailyRate: 490, gross: 1470, weeklyDiscount: 0, extras: [], extrasTotal: 0, rentalTotal: 1470 },
+    rentalTotal: 126,
+    deposit: 250,
+    breakdown: { dailyRate: 42, gross: 126, weeklyDiscount: 0, extras: [], extrasTotal: 0, rentalTotal: 126 },
   });
 
   return { vehicle, renter };
@@ -75,13 +76,16 @@ test('the migration stamps legacy rows and keeps their bookings', async () => {
   const { vehicle, renter } = await insertLegacyFleet();
   const counts = await globalise();
 
+  // Geography is inferred; money is not. The old build quoted everything in USD, so re-stamping
+  // a legacy price as the local currency would silently revalue every rate on file.
   const legacy = await Vehicle.findById(vehicle._id);
   assert.equal(legacy.country, 'ZA');
-  assert.equal(legacy.currency, 'ZAR');
+  assert.equal(legacy.currency, 'USD');
+  assert.equal(legacy.dailyRate, 42);
 
   const booking = await Booking.findOne({ code: 'RC-LEGACY1' });
   assert.equal(booking.status, 'returned');
-  assert.equal(booking.currency, 'ZAR');
+  assert.equal(booking.currency, 'USD');
   assert.equal(booking.customerAccepted, true);
   assert.equal(booking.managerApproved, true);
 
