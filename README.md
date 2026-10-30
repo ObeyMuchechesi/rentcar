@@ -212,7 +212,9 @@ reports what it changed and is safe to re-run; a second pass changes nothing. It
 Legacy rows get geography inferred but money left alone: their `country` becomes `ZA` while the `currency` stays
 `USD`, because the pre-worldwide build formatted every price in dollars and re-stamping them as the local currency
 would silently revalue every rate and booking already on file. Re-rate a branch deliberately from the Fleet screen
-if you want prices in the money it actually charges.
+if you want prices in the money it actually charges. A database that an earlier version of this script already stamped
+with the local currency needs the same correction: the migration only touches documents that still lack the fields, so
+re-running it will not change rows it has already written.
 
 ## Verification
 
