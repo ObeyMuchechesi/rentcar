@@ -173,8 +173,9 @@ Copy `backend/.env.example` to `backend/.env` to override port, secret, or URI.
 
 ### Who sees what
 
-- **Nobody** — the catalogue: search, branch picker with each branch's currency, vehicle detail, quote. Sign-in
-  sits in the top bar as a quiet link, not a call to action, because browsing needs no account.
+- **Nobody** — the catalogue: search, branch picker with each branch's currency, vehicle detail, quote. The public
+  top bar carries no sign-in button at all: browsing needs no account, and the only way into an account is the
+  create/sign-in prompt on a quote, or `/login` directly.
 - **A renter** — `/dashboard`: what needs their signature, live rentals, and history, with spend totalled one
   figure per currency. `/account` is their own profile, email and password.
 - **A manager** — `/admin`: operations stats and the approval queue; `/admin/bookings` the ledger plus the

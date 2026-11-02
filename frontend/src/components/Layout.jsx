@@ -64,29 +64,24 @@ export default function Layout() {
             </div>
           )}
         </nav>
-        <div className="session">
-          {user ? (
-            <>
-              <Link to="/account" className="who">
-                {user.name}
-              </Link>
-              <button
-                className="btn ghost small"
-                onClick={() => {
-                  logout();
-                  navigate('/');
-                }}
-              >
-                Sign out
-              </button>
-            </>
-          ) : (
-            // Booking is the only thing that needs an account, so sign-in stays off the shopfront.
-            <Link to="/login" className="quiet-link">
-              Staff or existing renter? Sign in
+        {/* Anonymous visitors get no sign-in entry point: the shopfront sells cars, and an account
+            only becomes relevant when a renter accepts a quote. /login stays reachable from there. */}
+        {user && (
+          <div className="session">
+            <Link to="/account" className="who">
+              {user.name}
             </Link>
-          )}
-        </div>
+            <button
+              className="btn ghost small"
+              onClick={() => {
+                logout();
+                navigate('/');
+              }}
+            >
+              Sign out
+            </button>
+          </div>
+        )}
       </header>
 
       <main className="content">
